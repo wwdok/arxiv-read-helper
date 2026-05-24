@@ -44,7 +44,7 @@ Generated files:
 - `metadata.json` — paper metadata
 - `figures_index.json` — maps `\includegraphics` references → paths relative to HTML
 
-**No figure conversion needed** — PDF figures are rendered in-browser via PDF.js, PNG/JPG figures use `<img>` tags directly.
+**No figure conversion needed** — PDF figures are embedded via `<embed>`, PNG/JPG via `<img>`, all pointing directly to source files.
 
 ### Step 2: Read the Preprocessed Output
 
@@ -77,7 +77,7 @@ Parse the LaTeX structure and apply the tiered translation strategy:
 - **Preserve all equation environments** (`\begin{equation}`, `\begin{align}`, `\begin{displaymath}`, etc.) as-is for MathJax rendering.
 - **Preserve inline math** (`$...$`) and display math (`$$...$$`, `\[...\]`) as-is.
 - Do NOT translate mathematical symbols or variable names inside equations.
-- **Embed ALL figures** — every `\includegraphics{...}` in the original should appear in the HTML. Use `figures_index.json` to find the source file path. For PNG/JPG: `<img src="...">`. For PDF: `<div class="pdf-figure" data-src="...">` (rendered by PDF.js). Do NOT skip figures.
+- **Embed ALL figures** — every `\includegraphics{...}` must appear in the HTML. Use `figures_index.json` to find the source path. PDF → `<embed>`, PNG/JPG → `<img>`. Do NOT skip figures.
 
 ### Step 4: Generate HTML
 
@@ -86,7 +86,7 @@ Use `templates/paper_template.html` as the design reference. The output must be 
 1. **Metadata header**: paper title (Chinese + English), authors, year, arxiv URL, project URL, GitHub URL
 2. **Body**: Translated content following the original paper's section structure
 3. **Formulas**: Rendered via MathJax CDN (preserve all LaTeX math environments)
-4. **Figures**: Use `figures_index.json` to look up the source path for each `\includegraphics{...}` reference. For PNG/JPG figures: `<img src="source/figures/xxx.png">`. For PDF figures: `<div class="pdf-figure" data-src="source/figures/xxx.pdf"></div>` — PDF.js will render them to canvas at page load. For missing figures: add a placeholder note.
+4. **Figures**: Use `figures_index.json` to look up the source path for each `\includegraphics{...}` reference. For PNG/JPG: `<img src="source/figures/xxx.png">`. For PDF: `<embed src="source/figures/xxx.pdf" type="application/pdf" width="100%" height="500">`. Wrap in `<figure>` with translated `<figcaption>`. For missing figures: add a placeholder note.
 5. **Layout**: Clean single-column reading layout with proper typography
 
 CSS requirements:

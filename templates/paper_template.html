@@ -19,31 +19,6 @@ window.MathJax = {
 };
 </script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-<script>
-// Render all PDF figures using PDF.js
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.pdf-figure').forEach(el => {
-    const src = el.dataset.src;
-    if (!src) return;
-    pdfjsLib.getDocument(src).promise.then(pdf => {
-      pdf.getPage(1).then(page => {
-        const scale = el.dataset.scale || 1.5;
-        const viewport = page.getViewport({ scale: parseFloat(scale) });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.maxWidth = '100%';
-        canvas.style.height = 'auto';
-        el.appendChild(canvas);
-        page.render({ canvasContext: canvas.getContext('2d'), viewport });
-      });
-    }).catch(err => {
-      el.innerHTML = '<div class="figure-placeholder">[PDF 加载失败: ' + src + ']</div>';
-    });
-  });
-});
-</script>
 <style>
   :root {
     --text-color: #1a1a1a;
@@ -148,14 +123,11 @@ document.addEventListener('DOMContentLoaded', () => {
     text-align: center;
   }
 
-  figure img, .pdf-figure canvas {
+  figure embed {
     max-width: 100%;
-    height: auto;
     border: 1px solid var(--border-color);
     border-radius: 4px;
   }
-
-  figure figcaption {
     margin-top: 8px;
     font-size: 0.9rem;
     color: var(--caption-color);
@@ -163,11 +135,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* ---- Tables ---- */
+  .table-wrapper {
+    overflow-x: auto;
+    margin: 20px 0;
+  }
+
   table {
     width: 100%;
     border-collapse: collapse;
-    margin: 20px 0;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
 
   table th {
