@@ -25,7 +25,7 @@ pip install requests beautifulsoup4 pymupdf Pillow
 When the user provides an arXiv URL (e.g., `https://arxiv.org/abs/2412.01506`):
 
 ```bash
-python C:\Users\wadew\.claude\skills\arxiv-read-helper\scripts\preprocess_arxiv.py "<arxiv_url>"
+python ./scripts/preprocess_arxiv.py "<arxiv_url>"
 ```
 
 The script will:
