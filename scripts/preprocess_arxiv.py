@@ -542,7 +542,7 @@ def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
             out_path = output_dir / rel_dir / f"{stem}.png"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(img_data)
-            return str(out_path.relative_to(output_dir.parent))
+            return str(out_path.relative_to(output_dir))
 
         # Convert JPEG to PNG
         try:
@@ -550,7 +550,7 @@ def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
             out_path = output_dir / rel_dir / f"{stem}.png"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             img.save(str(out_path), format="PNG")
-            return str(out_path.relative_to(output_dir.parent))
+            return str(out_path.relative_to(output_dir))
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
             return None
@@ -695,7 +695,7 @@ def main():
     figures = find_figures_in_tex(flattened, source_dir)
     print(f"  Found {len(figures)} figure references")
 
-    figures_output_dir = output_dir / "figures"
+    figures_output_dir = output_dir
     figures_index = {}
     for ref, path in figures.items():
         print(f"  Converting: {ref} ({path.name}) ... ", end="", flush=True)
@@ -715,7 +715,7 @@ def main():
     # Count total figures size
     total_size_mb = 0
     for rel_path in figures_index.values():
-        p = output_dir.parent / rel_path
+        p = output_dir / rel_path
         if p.exists():
             total_size_mb += p.stat().st_size
     total_size_mb /= (1024 * 1024)
