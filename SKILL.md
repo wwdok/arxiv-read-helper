@@ -69,10 +69,13 @@ Parse the LaTeX structure and apply the tiered translation strategy:
 | Appendix | Extract only key formulas/conclusions, skip rest |
 
 **Key rules:**
-- Preserve all `\label{...}`, `\ref{...}`, `\cite{...}` references in the output
-- Preserve all equation environments (`\begin{equation}`, `\begin{align}`, etc.) as-is for MathJax
-- Do NOT translate mathematical symbols or variable names inside equations
-- When translating paragraph text, preserve LaTeX inline math (`$...$`) and display math (`$$...$$`, `\[...\]`)
+- **IMPORTANT: Translate the ENTIRE paper** — every section from Abstract through Conclusion. Do NOT generate a "sample" or partial translation.
+- **Remove all `\cite{...}`** from the output — raw citation keys (e.g., `\cite{poole2023dreamfusion}`) are meaningless in a Chinese reading note. Simply delete them from the translated text.
+- **Remove all `\ref{...}` and `\label{...}`** from the output — cross-references like `\ref{fig:teaser}` don't resolve without LaTeX compilation. Replace with descriptive text where the reference is essential (e.g., "如图1所示" if you can determine the figure number).
+- **Preserve all equation environments** (`\begin{equation}`, `\begin{align}`, `\begin{displaymath}`, etc.) as-is for MathJax rendering.
+- **Preserve inline math** (`$...$`) and display math (`$$...$$`, `\[...\]`) as-is.
+- Do NOT translate mathematical symbols or variable names inside equations.
+- **Embed ALL figures** — every `\includegraphics{...}` in the original should appear as an `<img>` in the HTML. If the figure's base64 data is in `figures.json`, use it. Do NOT skip figures.
 
 ### Step 4: Generate HTML
 
