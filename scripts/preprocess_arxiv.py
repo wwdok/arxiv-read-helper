@@ -228,11 +228,12 @@ def download_source(arxiv_id: str, dest_dir: Path) -> None:
     # Extract safely — preserve directory structure but prevent path traversal
     with tarfile.open(tarball_path, "r:gz") as tar:
         for member in tar.getmembers():
-            # Security: normalize the path and reject dangerous ones
-            name = os.path.normpath(member.name).lstrip(os.sep)
-            if name.startswith("..") or os.path.isabs(name):
+            # Security: check raw name before lstrip to catch all traversal attempts
+            raw_name = os.path.normpath(member.name)
+            if raw_name.startswith("..") or os.path.isabs(raw_name):
                 print(f"  [WARNING] Skipping unsafe path: {member.name}")
                 continue
+            name = raw_name.lstrip(os.sep)
             member.name = name
             # Use data_filter if available (Python 3.12+), else trust our own check
             if hasattr(tarfile, "data_filter"):
@@ -284,10 +285,13 @@ def find_main_tex(source_dir: Path) -> Path:
     2. Largest .tex file
     3. Any .tex file
     """
-    tex_files = list(source_dir.glob("*.tex"))
+    tex_files = []
+    for ext in (".tex", ".ltx", ".latex", ".dtx"):
+        tex_files.extend(source_dir.glob(f"*{ext}"))
     if not tex_files:
         # Search all subdirectories recursively
-        tex_files = list(source_dir.glob("**/*.tex"))
+        for ext in (".tex", ".ltx", ".latex", ".dtx"):
+            tex_files.extend(source_dir.glob(f"**/*{ext}"))
 
     if not tex_files:
         raise FileNotFoundError(f"No .tex files found in {source_dir}")
@@ -317,9 +321,10 @@ def resolve_input_path(ref: str, main_file: Path, source_dir: Path) -> Path:
     # Clean the reference
     ref = ref.strip().strip('"').strip("'")
 
-    # Add .tex if no extension
-    if not ref.endswith(".tex"):
-        candidates = [f"{ref}.tex", ref]
+    # Check if ref already has a known TeX extension
+    _tex_exts = (".tex", ".ltx", ".latex", ".dtx")
+    if not any(ref.endswith(ext) for ext in _tex_exts):
+        candidates = [f"{ref}{ext}" for ext in _tex_exts] + [ref]
     else:
         candidates = [ref]
 
@@ -402,7 +407,7 @@ def strip_preamble_comments(content: str) -> str:
     for line in lines:
         stripped = line.strip()
 
-        if "\\begin{document}" in stripped:
+        if not stripped.startswith("%") and "\\begin{document}" in stripped:
             in_preamble = False
 
         if in_preamble and stripped.startswith("%"):
@@ -421,22 +426,21 @@ def strip_preamble_comments(content: str) -> str:
 # Figure Processing
 # ============================================================
 
-def find_graphicspath(content: str, source_dir: Path) -> list:
+def find_graphicspath(content: str, base_dir: Path) -> list:
     """Extract paths from \\graphicspath declarations.
 
     Handles: \\graphicspath{{figures/}{images/}}
+    Paths are resolved relative to base_dir (the declaring file's parent directory).
     Returns list of Path objects.
     """
     paths = []
     pattern = r'\\graphicspath\{(\{.*?\})\}'
-    match = re.search(pattern, content, re.DOTALL)
-    if match:
+    for match in re.finditer(pattern, content, re.DOTALL):
         inner = match.group(1)
-        # Extract each {path} inside
         for m in re.finditer(r'\{([^}]+)\}', inner):
             p = m.group(1).strip()
             if p:
-                paths.append(source_dir / p)
+                paths.append(base_dir / p)
     return paths
 
 
@@ -448,10 +452,34 @@ def find_figures_in_tex(content: str, source_dir: Path) -> dict:
     Returns a dict: {figure_name: Path_to_figure_file}
     """
     figures = {}
-    graphics_paths = find_graphicspath(content, source_dir)
 
-    # Match \\includegraphics[options]{path/to/figure}
-    pattern = r'\\includegraphics(?:\[.*?\])?\{([^}]+)\}'
+    # Collect graphics paths: main file content before any sub-file sections
+    # should resolve relative to source_dir; sub-file sections resolve
+    # relative to the sub-file's parent directory.
+    main_content = re.split(r'\n% === BEGIN:', content, maxsplit=1)[0]
+    graphics_paths = find_graphicspath(main_content, source_dir)
+
+    # Scan each included sub-file section for its own \\graphicspath
+    section_pattern = re.compile(r'^% === BEGIN: (.+?) ===$', re.MULTILINE)
+    for m in section_pattern.finditer(content):
+        section_file = m.group(1)
+        start = m.end() + 1  # after the newline that ends the BEGIN line
+        end_pat = rf'^% === END: {re.escape(section_file)} ===$'
+        end_m = re.search(end_pat, content[start:], re.MULTILINE)
+        if end_m:
+            section_content = content[start:start + end_m.start()]
+            section_dir = (source_dir / section_file).parent
+            try:
+                section_dir = section_dir.resolve(strict=False)
+            except Exception:
+                pass
+            sub_paths = find_graphicspath(section_content, section_dir)
+            for sp in sub_paths:
+                if sp not in graphics_paths:
+                    graphics_paths.append(sp)
+
+    # Match \\includegraphics[options]{path/to/figure} and \\includegraphics*[options]{...}
+    pattern = r'\\includegraphics\*?(?:\[.*?\])?\{([^}]+)\}'
     for match in re.finditer(pattern, content):
         ref = match.group(1)
         # Remove file extension for searching
@@ -480,12 +508,22 @@ def find_figures_in_tex(content: str, source_dir: Path) -> dict:
     return figures
 
 
-def convert_to_base64_png(figure_path: Path) -> str:
-    """Convert a figure file to a base64-encoded PNG data URI.
+def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
+    """Convert a figure file to base64-encoded PNG data URIs.
 
     Supports: .png, .jpg, .jpeg, .pdf (via PyMuPDF), .eps (warn and skip)
-    Returns: "data:image/png;base64,..." or None if conversion fails
+
+    Args:
+        figure_path: Path to the figure file.
+        ref_key: The key to use in the returned dict (usually the \\includegraphics
+                 argument). Multi-page PDFs get _pageN suffixes.
+
+    Returns:
+        dict of {key: "data:image/png;base64,..."} — empty dict if conversion fails.
     """
+    if ref_key is None:
+        ref_key = figure_path.stem
+
     ext = figure_path.suffix.lower()
 
     if ext in (".png", ".jpg", ".jpeg"):
@@ -493,46 +531,55 @@ def convert_to_base64_png(figure_path: Path) -> str:
             img_data = f.read()
 
         if ext == ".png":
-            return f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
+            return {ref_key: f"data:image/png;base64,{base64.b64encode(img_data).decode()}"}
 
         # Convert JPEG to PNG for consistency
         try:
             img = Image.open(io.BytesIO(img_data))
             buf = io.BytesIO()
             img.save(buf, format="PNG")
-            return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+            return {ref_key: f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"}
         except Exception as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
-            return None
+            return {}
 
     elif ext == ".pdf":
         try:
             import fitz  # PyMuPDF
         except ImportError:
             print(f"    [WARNING] PyMuPDF not installed, cannot convert PDF figure: {figure_path}")
-            return None
+            return {}
 
         try:
             doc = fitz.open(str(figure_path))
             if len(doc) == 0:
                 doc.close()
-                return None
-            page = doc[0]
-            # Render at ~200 DPI for good quality
-            mat = fitz.Matrix(2.78, 2.78)
-            pix = page.get_pixmap(matrix=mat)
-            img_data = pix.tobytes("png")
+                return {}
+
+            result = {}
+            mat = fitz.Matrix(2.78, 2.78)  # ~200 DPI
+            num_pages = len(doc)
+            for page_idx in range(num_pages):
+                page = doc[page_idx]
+                pix = page.get_pixmap(matrix=mat)
+                img_data = pix.tobytes("png")
+                # Single-page: use ref_key as-is; multi-page: add _pageN suffix
+                if num_pages == 1:
+                    key = ref_key
+                else:
+                    key = f"{ref_key}_page{page_idx + 1}"
+                result[key] = f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
             doc.close()
-            return f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
+            return result
         except Exception as e:
             print(f"    [WARNING] Failed to convert PDF: {e}")
-            return None
+            return {}
 
     elif ext == ".eps":
         print(f"    [WARNING] EPS conversion requires Ghostscript, skipping: {figure_path}")
-        return None
+        return {}
 
-    return None
+    return {}
 
 
 # ============================================================
@@ -627,10 +674,12 @@ def main():
     figures_b64 = {}
     for ref, path in figures.items():
         print(f"  Converting: {ref} ({path.name}) ... ", end="", flush=True)
-        data_uri = convert_to_base64_png(path)
-        if data_uri:
-            figures_b64[ref] = data_uri
-            print(f"OK ({len(data_uri):,} chars)")
+        results = convert_to_base64_png(path, ref_key=ref)
+        if results:
+            figures_b64.update(results)
+            total_chars = sum(len(v) for v in results.values())
+            suffix = f" ({len(results)} pages)" if len(results) > 1 else ""
+            print(f"OK ({total_chars:,} chars{suffix})")
         else:
             print("SKIPPED")
 
