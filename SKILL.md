@@ -42,14 +42,15 @@ Generated files:
 - `source/` — original TeX source (kept for reference)
 - `cleaned.tex` — flattened, cleaned TeX
 - `metadata.json` — paper metadata
-- `figures.json` — figure name → base64 data URI mapping
+- `figures/` — converted PNG figures (individual files, use with relative paths)
+- `figures_index.json` — mapping from TeX `\includegraphics` references to relative figure paths
 
 ### Step 2: Read the Preprocessed Output
 
 Read these files:
-- `cleaned.tex` — the flattened LaTeX source
-- `metadata.json` — paper metadata
-- `figures.json` — base64 image data (read only if needed, can be large)
+- `cleaned.tex` — the flattened LaTeX source (this is the main file you'll translate)
+- `metadata.json` — paper metadata (title, authors, year, links)
+- `figures_index.json` — maps `\includegraphics` references to relative image paths in `figures/`
 
 ### Step 3: Analyze and Translate
 
@@ -84,7 +85,7 @@ Use `templates/paper_template.html` as the design reference. The output must be 
 1. **Metadata header**: paper title (Chinese + English), authors, year, arxiv URL, project URL, GitHub URL
 2. **Body**: Translated content following the original paper's section structure
 3. **Formulas**: Rendered via MathJax CDN (preserve all LaTeX math environments)
-4. **Figures**: Embedded as `<img src="data:image/png;base64,...">` using the mapping from `figures.json`
+4. **Figures**: For each `\includegraphics{...}` in the TeX source, look up its relative path in `figures_index.json` and embed as `<img src="figures/{rel_path}">`. The `figures/` directory is next to the HTML file. If a figure is not in the index, add a placeholder note.
 5. **Layout**: Clean single-column reading layout with proper typography
 
 CSS requirements:

@@ -513,84 +513,97 @@ def find_figures_in_tex(content: str, source_dir: Path) -> dict:
     return figures
 
 
-def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
-    """Convert a figure file to base64-encoded PNG data URIs.
+def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
+    """Convert a figure file to PNG and save to output directory.
 
     Supports: .png, .jpg, .jpeg, .pdf (via PyMuPDF), .eps (warn and skip)
 
     Args:
-        figure_path: Path to the figure file.
-        ref_key: The key to use in the returned dict (usually the \\includegraphics
-                 argument). Multi-page PDFs get _pageN suffixes.
+        figure_path: Path to the source figure file.
+        ref_key: The \\includegraphics argument (e.g., "figures/teaser.pdf").
+        output_dir: Root directory for output figure files.
 
     Returns:
-        dict of {key: "data:image/png;base64,..."} — empty dict if conversion fails.
+        Relative path to the saved PNG file, or None if conversion failed.
+        Multi-page PDFs get _pageN suffixes before the extension.
     """
-    if ref_key is None:
-        ref_key = figure_path.stem
-
     ext = figure_path.suffix.lower()
+
+    # Determine output path, preserving subdirectory structure from ref_key
+    ref_path = Path(ref_key)
+    rel_dir = ref_path.parent
+    stem = ref_path.stem
 
     if ext in (".png", ".jpg", ".jpeg"):
         with open(figure_path, "rb") as f:
             img_data = f.read()
 
         if ext == ".png":
-            return {ref_key: f"data:image/png;base64,{base64.b64encode(img_data).decode()}"}
+            out_path = output_dir / rel_dir / f"{stem}.png"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(img_data)
+            return str(out_path.relative_to(output_dir.parent))
 
-        # Convert JPEG to PNG for consistency
+        # Convert JPEG to PNG
         try:
             img = Image.open(io.BytesIO(img_data))
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return {ref_key: f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"}
+            out_path = output_dir / rel_dir / f"{stem}.png"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(out_path), format="PNG")
+            return str(out_path.relative_to(output_dir.parent))
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
-            return {}
+            return None
         except Exception as e:
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
                 raise
             print(f"    [WARNING] Failed to convert JPEG: {e}")
-            return {}
+            return None
 
     elif ext == ".pdf":
         try:
             import fitz  # PyMuPDF
         except ImportError:
-            print(f"    [WARNING] PyMuPDF not installed, cannot convert PDF figure: {figure_path}")
-            return {}
+            print(f"    [WARNING] PyMuPDF not installed, cannot convert PDF: {figure_path}")
+            return None
 
         try:
             doc = fitz.open(str(figure_path))
             if len(doc) == 0:
                 doc.close()
-                return {}
+                return None
 
-            result = {}
-            mat = fitz.Matrix(2.78, 2.78)  # ~200 DPI
+            mat = fitz.Matrix(2.78, 2.78)
             num_pages = len(doc)
+            saved = []
             for page_idx in range(num_pages):
                 page = doc[page_idx]
                 pix = page.get_pixmap(matrix=mat)
                 img_data = pix.tobytes("png")
-                key = f"{ref_key}_page{page_idx + 1}"
-                result[key] = f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
+                if num_pages == 1:
+                    out_name = f"{stem}.png"
+                else:
+                    out_name = f"{stem}_page{page_idx + 1}.png"
+                out_path = output_dir / rel_dir / out_name
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(img_data)
+                saved.append(str(out_path.relative_to(output_dir.parent)))
             doc.close()
-            return result
+            return saved[0] if len(saved) == 1 else saved[0]
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert PDF: {e}")
-            return {}
+            return None
         except Exception as e:
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
                 raise
             print(f"    [WARNING] Failed to convert PDF: {e}")
-            return {}
+            return None
 
     elif ext == ".eps":
         print(f"    [WARNING] EPS conversion requires Ghostscript, skipping: {figure_path}")
-        return {}
+        return None
 
-    return {}
+    return None
 
 
 # ============================================================
@@ -682,22 +695,31 @@ def main():
     figures = find_figures_in_tex(flattened, source_dir)
     print(f"  Found {len(figures)} figure references")
 
-    figures_b64 = {}
+    figures_output_dir = output_dir / "figures"
+    figures_index = {}
     for ref, path in figures.items():
         print(f"  Converting: {ref} ({path.name}) ... ", end="", flush=True)
-        results = convert_to_base64_png(path, ref_key=ref)
-        if results:
-            figures_b64.update(results)
-            total_chars = sum(len(v) for v in results.values())
-            suffix = f" ({len(results)} pages)" if len(results) > 1 else ""
-            print(f"OK ({total_chars:,} chars{suffix})")
+        rel_path = convert_figure(path, ref, figures_output_dir)
+        if rel_path:
+            figures_index[ref] = rel_path
+            size_kb = (figures_output_dir.parent / rel_path).stat().st_size / 1024
+            print(f"OK → {rel_path} ({size_kb:.0f} KB)")
         else:
             print("SKIPPED")
 
-    figures_path = output_dir / "figures.json"
-    with open(figures_path, "w", encoding="utf-8") as f:
-        json.dump(figures_b64, f, ensure_ascii=False)
-    print(f"  Figures saved to: {figures_path} ({len(figures_b64)} converted, {len(figures) - len(figures_b64)} skipped)")
+    figures_index_path = output_dir / "figures_index.json"
+    with open(figures_index_path, "w", encoding="utf-8") as f:
+        json.dump(figures_index, f, ensure_ascii=False, indent=2)
+    print(f"  Index saved: {figures_index_path}")
+
+    # Count total figures size
+    total_size_mb = 0
+    for rel_path in figures_index.values():
+        p = output_dir.parent / rel_path
+        if p.exists():
+            total_size_mb += p.stat().st_size
+    total_size_mb /= (1024 * 1024)
+    print(f"  {len(figures_index)} figures, {total_size_mb:.1f} MB total")
 
     # 6. Save metadata
     print("\n[5/5] Saving metadata...")
@@ -710,8 +732,8 @@ def main():
     print(f"\n{'='*60}")
     print(f"Preprocessing complete!")
     print(f"  Output: {output_dir}")
-    print(f"  Files: metadata.json, cleaned.tex, figures.json, source/")
-    print(f"  Figures: {len(figures_b64)}/{len(figures)} converted")
+    print(f"  Files: metadata.json, cleaned.tex, figures_index.json, figures/, source/")
+    print(f"  Figures: {len(figures_index)} converted ({total_size_mb:.1f} MB), {len(figures) - len(figures_index)} skipped")
     print(f"{'='*60}")
     return 0
 
