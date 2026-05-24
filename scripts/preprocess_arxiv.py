@@ -3,7 +3,8 @@
 arXiv Read Helper — Preprocessing Script
 
 Downloads arXiv TeX source, flattens multi-file projects,
-converts figures to base64, and outputs cleaned .tex + metadata.
+indexes figures (no conversion — uses source files directly),
+and outputs cleaned .tex + metadata.
 
 Usage:
     python preprocess_arxiv.py <arxiv_url>
@@ -17,14 +18,11 @@ import os
 import re
 import sys
 import tarfile
-import base64
-import io
 import shutil
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
 
 # ============================================================
 # Constants
@@ -513,96 +511,6 @@ def find_figures_in_tex(content: str, source_dir: Path) -> dict:
     return figures
 
 
-def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
-    """Convert a figure file to PNG and save to output directory.
-
-    Supports: .png, .jpg, .jpeg, .pdf (via PyMuPDF), .eps (warn and skip)
-
-    Args:
-        figure_path: Path to the source figure file.
-        ref_key: The \\includegraphics argument (e.g., "figures/teaser.pdf").
-        output_dir: Root directory for output figure files.
-
-    Returns:
-        Relative path to the saved PNG file, or None if conversion failed.
-        Multi-page PDFs get _pageN suffixes before the extension.
-    """
-    ext = figure_path.suffix.lower()
-
-    # Determine output path from ref_key: just change extension to .png
-    ref_path = Path(ref_key)
-    rel_out = str(ref_path.parent / f"{ref_path.stem}.png")
-
-    if ext in (".png", ".jpg", ".jpeg"):
-        with open(figure_path, "rb") as f:
-            img_data = f.read()
-
-        if ext == ".png":
-            out_path = output_dir / rel_out
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_bytes(img_data)
-            return rel_out
-
-        # Convert JPEG to PNG
-        try:
-            img = Image.open(io.BytesIO(img_data))
-            out_path = output_dir / rel_out
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            img.save(str(out_path), format="PNG")
-            return rel_out
-        except (IOError, OSError, RuntimeError) as e:
-            print(f"    [WARNING] Failed to convert JPEG: {e}")
-            return None
-        except Exception as e:
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
-            print(f"    [WARNING] Failed to convert JPEG: {e}")
-            return None
-
-    elif ext == ".pdf":
-        try:
-            import fitz  # PyMuPDF
-        except ImportError:
-            print(f"    [WARNING] PyMuPDF not installed, cannot convert PDF: {figure_path}")
-            return None
-
-        try:
-            doc = fitz.open(str(figure_path))
-            if len(doc) == 0:
-                doc.close()
-                return None
-
-            mat = fitz.Matrix(2.78, 2.78)
-            num_pages = len(doc)
-            for page_idx in range(num_pages):
-                page = doc[page_idx]
-                pix = page.get_pixmap(matrix=mat)
-                img_data = pix.tobytes("png")
-                if num_pages == 1:
-                    out_rel = rel_out
-                else:
-                    out_rel = str(ref_path.parent / f"{ref_path.stem}_page{page_idx + 1}.png")
-                out_path = output_dir / out_rel
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_bytes(img_data)
-            doc.close()
-            return rel_out
-        except (IOError, OSError, RuntimeError) as e:
-            print(f"    [WARNING] Failed to convert PDF: {e}")
-            return None
-        except Exception as e:
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
-            print(f"    [WARNING] Failed to convert PDF: {e}")
-            return None
-
-    elif ext == ".eps":
-        print(f"    [WARNING] EPS conversion requires Ghostscript, skipping: {figure_path}")
-        return None
-
-    return None
-
-
 # ============================================================
 # Main Entry Point
 # ============================================================
@@ -687,36 +595,25 @@ def main():
     cleaned_path.write_text(flattened, encoding="utf-8")
     print(f"  Cleaned TeX saved to: {cleaned_path}")
 
-    # 5. Find and convert figures
-    print("\n[4/5] Processing figures...")
+    # 5. Find and index figures (no conversion — use source files directly)
+    print("\n[4/5] Indexing figures...")
     figures = find_figures_in_tex(flattened, source_dir)
     print(f"  Found {len(figures)} figure references")
 
-    figures_output_dir = output_dir
     figures_index = {}
-    for ref, path in figures.items():
-        print(f"  Converting: {ref} ({path.name}) ... ", end="", flush=True)
-        rel_path = convert_figure(path, ref, figures_output_dir)
-        if rel_path:
-            figures_index[ref] = rel_path
-            size_kb = (figures_output_dir / rel_path).stat().st_size / 1024
-            print(f"OK → {rel_path} ({size_kb:.0f} KB)")
-        else:
-            print("SKIPPED")
+    for ref, src_path in figures.items():
+        # Map ref_key → relative path from paper dir to source file
+        try:
+            rel = src_path.relative_to(output_dir)
+        except ValueError:
+            rel = Path("source") / src_path.relative_to(source_dir)
+        figures_index[ref] = str(rel).replace("\\", "/")
+        print(f"  {ref} → {figures_index[ref]}")
 
     figures_index_path = output_dir / "figures_index.json"
     with open(figures_index_path, "w", encoding="utf-8") as f:
         json.dump(figures_index, f, ensure_ascii=False, indent=2)
-    print(f"  Index saved: {figures_index_path}")
-
-    # Count total figures size
-    total_size_mb = 0
-    for rel_path in figures_index.values():
-        p = output_dir / rel_path
-        if p.exists():
-            total_size_mb += p.stat().st_size
-    total_size_mb /= (1024 * 1024)
-    print(f"  {len(figures_index)} figures, {total_size_mb:.1f} MB total")
+    print(f"  Index saved: {figures_index_path} ({len(figures_index)} entries)")
 
     # 6. Save metadata
     print("\n[5/5] Saving metadata...")
@@ -729,8 +626,8 @@ def main():
     print(f"\n{'='*60}")
     print(f"Preprocessing complete!")
     print(f"  Output: {output_dir}")
-    print(f"  Files: metadata.json, cleaned.tex, figures_index.json, figures/, source/")
-    print(f"  Figures: {len(figures_index)} converted ({total_size_mb:.1f} MB), {len(figures) - len(figures_index)} skipped")
+    print(f"  Files: metadata.json, cleaned.tex, figures_index.json, source/")
+    print(f"  Figures: {len(figures_index)} indexed")
     print(f"{'='*60}")
     return 0
 

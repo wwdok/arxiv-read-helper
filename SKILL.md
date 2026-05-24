@@ -34,16 +34,17 @@ The script will:
 3. Download the TeX source tarball from `arxiv.org/e-print/{id}`
 4. Extract to `source/` under the output directory
 5. Flatten `\input`/`\include` into a single `cleaned.tex`
-6. Convert all figures to base64 PNG, outputting a `figures.json` mapping
-7. Save `metadata.json` with all extracted metadata
+6. Index all figures — map `\includegraphics` references to source file paths
+7. Save `metadata.json` and `figures_index.json`
 
 Output directory: `D:/论文阅读笔记合集/{paper_title}/`
 Generated files:
-- `source/` — original TeX source (kept for reference)
+- `source/` — original TeX source (figures are here, kept for reference)
 - `cleaned.tex` — flattened, cleaned TeX
 - `metadata.json` — paper metadata
-- `figures/` — converted PNG figures (individual files, use with relative paths)
-- `figures_index.json` — mapping from TeX `\includegraphics` references to relative figure paths
+- `figures_index.json` — maps `\includegraphics` references → paths relative to HTML
+
+**No figure conversion needed** — PDF figures are rendered in-browser via PDF.js, PNG/JPG figures use `<img>` tags directly.
 
 ### Step 2: Read the Preprocessed Output
 
@@ -76,7 +77,7 @@ Parse the LaTeX structure and apply the tiered translation strategy:
 - **Preserve all equation environments** (`\begin{equation}`, `\begin{align}`, `\begin{displaymath}`, etc.) as-is for MathJax rendering.
 - **Preserve inline math** (`$...$`) and display math (`$$...$$`, `\[...\]`) as-is.
 - Do NOT translate mathematical symbols or variable names inside equations.
-- **Embed ALL figures** — every `\includegraphics{...}` in the original should appear as an `<img>` in the HTML. If the figure's base64 data is in `figures.json`, use it. Do NOT skip figures.
+- **Embed ALL figures** — every `\includegraphics{...}` in the original should appear in the HTML. Use `figures_index.json` to find the source file path. For PNG/JPG: `<img src="...">`. For PDF: `<div class="pdf-figure" data-src="...">` (rendered by PDF.js). Do NOT skip figures.
 
 ### Step 4: Generate HTML
 
@@ -85,7 +86,7 @@ Use `templates/paper_template.html` as the design reference. The output must be 
 1. **Metadata header**: paper title (Chinese + English), authors, year, arxiv URL, project URL, GitHub URL
 2. **Body**: Translated content following the original paper's section structure
 3. **Formulas**: Rendered via MathJax CDN (preserve all LaTeX math environments)
-4. **Figures**: For each `\includegraphics{...}` in the TeX source, look up its relative path in `figures_index.json` and embed as `<img src="figures/{rel_path}">`. The `figures/` directory is next to the HTML file. If a figure is not in the index, add a placeholder note.
+4. **Figures**: Use `figures_index.json` to look up the source path for each `\includegraphics{...}` reference. For PNG/JPG figures: `<img src="source/figures/xxx.png">`. For PDF figures: `<div class="pdf-figure" data-src="source/figures/xxx.pdf"></div>` — PDF.js will render them to canvas at page load. For missing figures: add a placeholder note.
 5. **Layout**: Clean single-column reading layout with proper typography
 
 CSS requirements:
