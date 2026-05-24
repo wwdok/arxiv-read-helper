@@ -702,7 +702,7 @@ def main():
         rel_path = convert_figure(path, ref, figures_output_dir)
         if rel_path:
             figures_index[ref] = rel_path
-            size_kb = (figures_output_dir.parent / rel_path).stat().st_size / 1024
+            size_kb = (figures_output_dir / rel_path).stat().st_size / 1024
             print(f"OK → {rel_path} ({size_kb:.0f} KB)")
         else:
             print("SKIPPED")
