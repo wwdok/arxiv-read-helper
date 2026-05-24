@@ -529,28 +529,27 @@ def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
     """
     ext = figure_path.suffix.lower()
 
-    # Determine output path, preserving subdirectory structure from ref_key
+    # Determine output path from ref_key: just change extension to .png
     ref_path = Path(ref_key)
-    rel_dir = ref_path.parent
-    stem = ref_path.stem
+    rel_out = str(ref_path.parent / f"{ref_path.stem}.png")
 
     if ext in (".png", ".jpg", ".jpeg"):
         with open(figure_path, "rb") as f:
             img_data = f.read()
 
         if ext == ".png":
-            out_path = output_dir / rel_dir / f"{stem}.png"
+            out_path = output_dir / rel_out
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(img_data)
-            return str(out_path.relative_to(output_dir))
+            return rel_out
 
         # Convert JPEG to PNG
         try:
             img = Image.open(io.BytesIO(img_data))
-            out_path = output_dir / rel_dir / f"{stem}.png"
+            out_path = output_dir / rel_out
             out_path.parent.mkdir(parents=True, exist_ok=True)
             img.save(str(out_path), format="PNG")
-            return str(out_path.relative_to(output_dir))
+            return rel_out
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
             return None
@@ -575,21 +574,19 @@ def convert_figure(figure_path: Path, ref_key: str, output_dir: Path) -> str:
 
             mat = fitz.Matrix(2.78, 2.78)
             num_pages = len(doc)
-            saved = []
             for page_idx in range(num_pages):
                 page = doc[page_idx]
                 pix = page.get_pixmap(matrix=mat)
                 img_data = pix.tobytes("png")
                 if num_pages == 1:
-                    out_name = f"{stem}.png"
+                    out_rel = rel_out
                 else:
-                    out_name = f"{stem}_page{page_idx + 1}.png"
-                out_path = output_dir / rel_dir / out_name
+                    out_rel = str(ref_path.parent / f"{ref_path.stem}_page{page_idx + 1}.png")
+                out_path = output_dir / out_rel
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(img_data)
-                saved.append(str(out_path.relative_to(output_dir.parent)))
             doc.close()
-            return saved[0] if len(saved) == 1 else saved[0]
+            return rel_out
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert PDF: {e}")
             return None
