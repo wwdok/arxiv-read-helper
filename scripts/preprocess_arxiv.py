@@ -222,6 +222,11 @@ def download_source(arxiv_id: str, dest_dir: Path) -> None:
     with open(tarball_path, "wb") as f:
         f.write(resp.content)
 
+    # Remove existing source directory to prevent stale files
+    source_dir = dest_dir / "source"
+    if source_dir.exists():
+        shutil.rmtree(source_dir)
+
     extract_dir = dest_dir / "source"
     extract_dir.mkdir(parents=True, exist_ok=True)
 
@@ -539,7 +544,7 @@ def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return {ref_key: f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"}
-        except Exception as e:
+        except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
             return {}
 
@@ -563,15 +568,11 @@ def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
                 page = doc[page_idx]
                 pix = page.get_pixmap(matrix=mat)
                 img_data = pix.tobytes("png")
-                # Single-page: use ref_key as-is; multi-page: add _pageN suffix
-                if num_pages == 1:
-                    key = ref_key
-                else:
-                    key = f"{ref_key}_page{page_idx + 1}"
+                key = f"{ref_key}_page{page_idx + 1}"
                 result[key] = f"data:image/png;base64,{base64.b64encode(img_data).decode()}"
             doc.close()
             return result
-        except Exception as e:
+        except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert PDF: {e}")
             return {}
 
