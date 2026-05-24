@@ -547,6 +547,11 @@ def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
         except (IOError, OSError, RuntimeError) as e:
             print(f"    [WARNING] Failed to convert JPEG: {e}")
             return {}
+        except Exception as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            print(f"    [WARNING] Failed to convert JPEG: {e}")
+            return {}
 
     elif ext == ".pdf":
         try:
@@ -573,6 +578,11 @@ def convert_to_base64_png(figure_path: Path, ref_key: str = None) -> dict:
             doc.close()
             return result
         except (IOError, OSError, RuntimeError) as e:
+            print(f"    [WARNING] Failed to convert PDF: {e}")
+            return {}
+        except Exception as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
             print(f"    [WARNING] Failed to convert PDF: {e}")
             return {}
 
