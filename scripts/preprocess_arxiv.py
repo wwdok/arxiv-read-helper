@@ -24,6 +24,12 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    import fitz  # PyMuPDF
+    HAS_PYMUPDF = True
+except ImportError:
+    HAS_PYMUPDF = False
+
 # ============================================================
 # Constants
 # ============================================================
@@ -429,6 +435,75 @@ def strip_preamble_comments(content: str) -> str:
 # Figure Processing
 # ============================================================
 
+# DPI for PDF→PNG conversion. 200 keeps text crisp without producing huge files.
+PDF_RENDER_DPI = 200
+# Cap the longest edge of the rendered PNG. Some arXiv teaser/results PDFs are
+# huge multi-panel layouts that produce hundreds of MB at 200 DPI; this clamp
+# keeps the final PNG manageable while staying readable on screen.
+PDF_MAX_PIXEL_DIMENSION = 2400
+
+
+def convert_pdf_to_svg(pdf_path: Path, svg_path: Path) -> bool:
+    """Render the first page of a PDF figure to SVG.
+
+    Returns True on success, False if pymupdf is unavailable or rendering fails.
+    arXiv figures are almost always single-page; we render page 0 only.
+
+    SVG preserves vector geometry so figures stay crisp at any zoom. Raster
+    sub-images inside the PDF (photos, screenshots) get embedded as base64 PNG,
+    so figures dominated by photos may be larger than a PNG render — we accept
+    that trade-off in exchange for sharp text/lines in the common case.
+    """
+    if not HAS_PYMUPDF:
+        return False
+    try:
+        doc = fitz.open(pdf_path)
+        if doc.page_count == 0:
+            doc.close()
+            return False
+        page = doc.load_page(0)
+        svg_text = page.get_svg_image(text_as_path=False)
+        doc.close()
+        svg_path.write_text(svg_text, encoding="utf-8")
+        return True
+    except Exception as e:
+        print(f"  [WARNING] Failed to convert {pdf_path.name}: {e}")
+        return False
+
+
+def convert_pdf_to_png(pdf_path: Path, png_path: Path, dpi: int = PDF_RENDER_DPI) -> bool:
+    """Fallback: render PDF to PNG when SVG conversion fails.
+
+    The render zoom is the smaller of (dpi/72) and the zoom that keeps the
+    longest output edge at PDF_MAX_PIXEL_DIMENSION, so multi-panel teaser
+    figures don't blow up to hundreds of MB.
+    """
+    if not HAS_PYMUPDF:
+        return False
+    try:
+        doc = fitz.open(pdf_path)
+        if doc.page_count == 0:
+            doc.close()
+            return False
+        page = doc.load_page(0)
+
+        # Page dimensions in points (1 pt = 1/72 inch)
+        rect = page.rect
+        longest_pt = max(rect.width, rect.height)
+        dpi_zoom = dpi / 72
+        size_zoom = PDF_MAX_PIXEL_DIMENSION / longest_pt if longest_pt > 0 else dpi_zoom
+        zoom = min(dpi_zoom, size_zoom)
+
+        matrix = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        pix.save(str(png_path))
+        doc.close()
+        return True
+    except Exception as e:
+        print(f"  [WARNING] Failed to convert {pdf_path.name}: {e}")
+        return False
+
+
 def find_graphicspath(content: str, base_dir: Path) -> list:
     """Extract paths from \\graphicspath declarations.
 
@@ -595,20 +670,68 @@ def main():
     cleaned_path.write_text(flattened, encoding="utf-8")
     print(f"  Cleaned TeX saved to: {cleaned_path}")
 
-    # 5. Find and index figures (no conversion — use source files directly)
+    # 5. Find and index figures
     print("\n[4/5] Indexing figures...")
     figures = find_figures_in_tex(flattened, source_dir)
     print(f"  Found {len(figures)} figure references")
 
+    # Convert PDF figures to SVG (preferred, vector) or PNG (fallback) so the
+    # HTML can use <img> instead of <embed>. Output goes into sibling
+    # figures_svg/ or figures_png/ directories next to source/, so source/
+    # stays untouched for reference.
+    if not HAS_PYMUPDF:
+        print("  [WARNING] pymupdf not installed — PDF figures will not be converted.")
+        print("            Install with: pip install pymupdf")
+    svg_dir = output_dir / "figures_svg"
+    png_dir = output_dir / "figures_png"
+    pdf_to_svg = 0
+    pdf_to_png = 0
+    pdf_failed = 0
+
     figures_index = {}
     for ref, src_path in figures.items():
-        # Map ref_key → relative path from paper dir to source file
-        try:
-            rel = src_path.relative_to(output_dir)
-        except ValueError:
-            rel = Path("source") / src_path.relative_to(source_dir)
+        ext = src_path.suffix.lower()
+
+        # Convert PDF/EPS to SVG; pass PNG/JPG through unchanged.
+        if ext == ".pdf" and HAS_PYMUPDF:
+            svg_dir.mkdir(exist_ok=True)
+            out_stem = src_path.stem
+            svg_path = svg_dir / f"{out_stem}.svg"
+            # Avoid name collisions for figures with the same stem in different
+            # subdirectories: prefix with parent dir name if needed.
+            if svg_path.exists():
+                parent_tag = src_path.parent.name
+                out_stem = f"{parent_tag}_{src_path.stem}"
+                svg_path = svg_dir / f"{out_stem}.svg"
+
+            if convert_pdf_to_svg(src_path, svg_path):
+                rel = Path("figures_svg") / svg_path.name
+                pdf_to_svg += 1
+            else:
+                # SVG failed — try PNG fallback
+                png_dir.mkdir(exist_ok=True)
+                png_path = png_dir / f"{out_stem}.png"
+                if convert_pdf_to_png(src_path, png_path):
+                    rel = Path("figures_png") / png_path.name
+                    pdf_to_png += 1
+                else:
+                    rel = Path("source") / src_path.relative_to(source_dir)
+                    pdf_failed += 1
+        else:
+            try:
+                rel = src_path.relative_to(output_dir)
+            except ValueError:
+                rel = Path("source") / src_path.relative_to(source_dir)
+
         figures_index[ref] = str(rel).replace("\\", "/")
         print(f"  {ref} → {figures_index[ref]}")
+
+    if pdf_to_svg:
+        print(f"  Converted {pdf_to_svg} PDF figure(s) to SVG")
+    if pdf_to_png:
+        print(f"  Converted {pdf_to_png} PDF figure(s) to PNG (SVG fallback)")
+    if pdf_failed:
+        print(f"  [WARNING] {pdf_failed} PDF figure(s) could not be converted; kept original paths")
 
     figures_index_path = output_dir / "figures_index.json"
     with open(figures_index_path, "w", encoding="utf-8") as f:

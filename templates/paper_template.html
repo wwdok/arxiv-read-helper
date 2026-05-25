@@ -123,11 +123,15 @@ window.MathJax = {
     text-align: center;
   }
 
+  figure img,
   figure embed {
     max-width: 100%;
+    height: auto;
     border: 1px solid var(--border-color);
     border-radius: 4px;
   }
+
+  figcaption {
     margin-top: 8px;
     font-size: 0.9rem;
     color: var(--caption-color);
@@ -141,9 +145,12 @@ window.MathJax = {
   }
 
   table {
-    width: 100%;
     border-collapse: collapse;
     font-size: 0.85rem;
+    /* No width constraint: narrow tables size to content (centered via
+       margin:auto), wide tables overflow the wrapper and trigger horizontal
+       scrolling instead of squeezing the page layout. */
+    margin: 0 auto;
   }
 
   table th {

@@ -39,12 +39,14 @@ The script will:
 
 Output directory: `D:/论文阅读笔记合集/{paper_title}/`
 Generated files:
-- `source/` — original TeX source (figures are here, kept for reference)
+- `source/` — original TeX source (kept for reference)
+- `figures_svg/` — PDF figures converted to SVG (vector; created only if PDF figures exist)
+- `figures_png/` — PNG fallback if SVG conversion fails for a given PDF (rare)
 - `cleaned.tex` — flattened, cleaned TeX
 - `metadata.json` — paper metadata
 - `figures_index.json` — maps `\includegraphics` references → paths relative to HTML
 
-**No figure conversion needed** — PDF figures are embedded via `<embed>`, PNG/JPG via `<img>`, all pointing directly to source files.
+**All figure paths in `figures_index.json` resolve to a browser-renderable image (SVG/PNG/JPG)** — PDF figures are pre-converted (SVG preferred, PNG fallback) during preprocessing, so the HTML can use `<img>` uniformly.
 
 ### Step 2: Read the Preprocessed Output
 
@@ -77,7 +79,7 @@ Parse the LaTeX structure and apply the tiered translation strategy:
 - **Preserve all equation environments** (`\begin{equation}`, `\begin{align}`, `\begin{displaymath}`, etc.) as-is for MathJax rendering.
 - **Preserve inline math** (`$...$`) and display math (`$$...$$`, `\[...\]`) as-is.
 - Do NOT translate mathematical symbols or variable names inside equations.
-- **Embed ALL figures** — every `\includegraphics{...}` must appear in the HTML. Use `figures_index.json` to find the source path. PDF → `<embed>`, PNG/JPG → `<img>`. Do NOT skip figures.
+- **Embed ALL figures** — every `\includegraphics{...}` must appear in the HTML. Use `figures_index.json` to find the path; **always use `<img>`** (paths already point to PNG/JPG since PDFs are pre-converted). Wrap in `<figure>` with translated `<figcaption>`.
 
 ### Step 4: Generate HTML
 
@@ -86,8 +88,9 @@ Use `templates/paper_template.html` as the design reference. The output must be 
 1. **Metadata header**: paper title (Chinese + English), authors, year, arxiv URL, project URL, GitHub URL
 2. **Body**: Translated content following the original paper's section structure
 3. **Formulas**: Rendered via MathJax CDN (preserve all LaTeX math environments)
-4. **Figures**: Use `figures_index.json` to look up the source path for each `\includegraphics{...}` reference. For PNG/JPG: `<img src="source/figures/xxx.png">`. For PDF: `<embed src="source/figures/xxx.pdf" type="application/pdf" width="100%" height="500">`. Wrap in `<figure>` with translated `<figcaption>`. For missing figures: add a placeholder note.
-5. **Layout**: Clean single-column reading layout with proper typography
+4. **Figures**: Use `figures_index.json` to look up the path for each `\includegraphics{...}` reference. Always emit `<img src="..." alt="...">` — PDFs were already pre-converted to SVG (or PNG fallback) by the preprocessor, so paths resolve to a browser-renderable image. Wrap in `<figure>` with a translated `<figcaption>`. For missing entries: add a placeholder note.
+5. **Tables**: **Every `<table>` MUST be wrapped in `<div class="table-wrapper">...</div>`** so wide tables get horizontal scrolling instead of overflowing the page. Do not set inline `width` on tables — let the CSS handle sizing. Preserve original numerical data verbatim; only translate column headers and surrounding prose.
+6. **Layout**: Clean single-column reading layout with proper typography
 
 CSS requirements:
 - Max-width ~900px centered, good for reading
